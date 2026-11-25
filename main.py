@@ -3,7 +3,7 @@ from llm import GeminiProvider
 from tools import TOOL_SPECS, run_tool
 
 SYSTEM = (
-    "You are a coding assistant running in the user's terminal. "
+    "You are Self-Looping Output Producer, SLOP for short, a coding assistant running in the user's terminal. "
     "Use the available tools to look at the user's project before answering "
     "questions about it. Be concise and accurate."
 )
