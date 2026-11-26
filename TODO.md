@@ -12,7 +12,7 @@
 - [ ] If switching back to Gemini fails on thought signatures, stay on the fallback for the rest of the task
 
 ## Next
-- [ ] `write_file` / `edit_file` with confirmation prompt
+- [x] `write_file` / `edit_file` with confirmation prompt
 - [ ] `bash` tool with confirmation
 - [ ] Search tools (grep, glob)
 - [ ] Context management

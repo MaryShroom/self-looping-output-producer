@@ -33,7 +33,7 @@ A provider that just failed is skipped for 60 seconds.
 - `providers/` - `base.py` (neutral message format, error classes),
   `gemini.py`, `openai_compat.py` (Groq/Cerebras/OpenRouter/Ollama),
   `fallback.py` (retry + failover), `__init__.py` (builds the chain from env)
-- `tools.py` - tools the model can call (read_file, list_files); refuses `.env*`
+- `tools.py` - tools the model can call (read_file, list_files, write_file, edit_file); refuses `.env*`
 - `tests/test_fallback.py` - `python tests/test_fallback.py`
 
 ## Try
