@@ -5,7 +5,7 @@ from .base import Reply, ToolCall
 
 
 class OpenAICompatProvider:
-    def __init__(self, name, base_url, api_key, model, timeout=60, client=None):
+    def __init__(self, name, base_url, api_key, model, timeout=30, client=None):
         self.name = name
         self.model = model
         if client is None:

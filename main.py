@@ -1,5 +1,6 @@
 """Minimal coding assistant: terminal chat + tool loop, with provider failover."""
 import os
+import time
 from pathlib import Path
 
 from providers import build_provider
@@ -7,8 +8,8 @@ from tools import TOOL_SPECS, run_tool
 
 SYSTEM = (
     "You are a coding assistant running in the user's terminal. "
-    "Use the available tools to look at the user's project before answering "
-    "questions about it. Be concise and accurate."
+    "Use the available tools only when the request needs information from the user's project; "
+    "answer greetings and general questions directly. Be concise and accurate."
 )
 MAX_STEPS = 15  # safety cap on tool round-trips per user message
 
@@ -30,7 +31,9 @@ def load_env(path: Path) -> None:
 def run_turn(provider, history: list[dict]) -> None:
     """One user message -> model, run any requested tools, repeat until done."""
     for _ in range(MAX_STEPS):
+        started = time.monotonic()
         reply = provider.generate(SYSTEM, history, TOOL_SPECS)
+        print(f"  ({reply.provider}, {time.monotonic() - started:.1f}s)")
         history.append(reply.to_message())
         if reply.text:
             print(f"\n{reply.text}\n")

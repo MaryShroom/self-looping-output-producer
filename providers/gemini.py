@@ -10,9 +10,11 @@ from .base import Reply, ToolCall
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self, model: str | None = None, api_key: str | None = None):
+    def __init__(self, model: str | None = None, api_key: str | None = None, timeout: float = 30):
         self.model = model or os.environ.get("GEMINI_MODEL", "models/gemini-3.8-flash")
-        self.client = genai.Client(api_key=api_key) if api_key else genai.Client()
+        # Fail after `timeout` seconds instead of hanging while Google is overloaded.
+        opts = types.HttpOptions(timeout=int(timeout * 1000))  # SDK takes milliseconds
+        self.client = genai.Client(api_key=api_key, http_options=opts)  # None -> env var
 
     def _to_contents(self, history: list[dict]) -> list:
         """Convert neutral history into Gemini messages."""

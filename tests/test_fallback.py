@@ -50,18 +50,32 @@ def test_primary_ok():
     assert sleeps == [] and log == [] and b.calls == 0
 
 
-def test_retry_then_success():
+def test_last_provider_is_retried_with_backoff():
+    a = Fake("a", [FakeErr(503), FakeErr(503)])  # fails twice, then succeeds
+    fb, log, sleeps, _ = make([a])
+    assert fb.generate("s", [], []).provider == "a"
+    assert a.calls == 3 and sleeps == [1.0, 2.0]
+
+
+def test_transient_error_fails_over_immediately_when_another_provider_exists():
     a, b = Fake("a", [FakeErr(503)]), Fake("b")
     fb, log, sleeps, _ = make([a, b])
-    assert fb.generate("s", [], []).provider == "a"
-    assert sleeps == [1.0] and b.calls == 0
-
-
-def test_failover_after_retries():
-    a, b = Fake("a", [FakeErr(503)] * 3), Fake("b")
-    fb, log, sleeps, _ = make([a, b])
     assert fb.generate("s", [], []).provider == "b"
-    assert a.calls == 3 and sleeps == [1.0, 2.0]
+    assert a.calls == 1 and sleeps == []   # no waiting on the struggling provider
+
+
+def test_cooldown_doubles_on_repeat_failures():
+    a, b = Fake("a", [FakeErr(503), FakeErr(503)]), Fake("b")
+    fb, log, sleeps, now = make([a, b])
+    fb.generate("s", [], [])               # a fails (1st): down for 60s
+    now[0] = 61.0
+    fb.generate("s", [], [])               # a retried, fails again (2nd): down for 120s
+    assert a.calls == 2
+    now[0] = 130.0                         # 130 < 61 + 120: still cooling down
+    fb.generate("s", [], [])
+    assert a.calls == 2
+    now[0] = 182.0                         # past the doubled cooldown: tried again, recovers
+    assert fb.generate("s", [], []).provider == "a"
 
 
 def test_rate_limit_switches_immediately():
@@ -117,12 +131,12 @@ def test_all_bad_keys_raises_clear_error():
 
 
 def test_cooldown_skips_failed_provider_then_retries_it():
-    a, b = Fake("a", [FakeErr(503)] * 3), Fake("b")
+    a, b = Fake("a", [FakeErr(503)]), Fake("b")
     fb, log, sleeps, now = make([a, b])
-    fb.generate("s", [], [])           # a fails 3x, b answers
-    assert a.calls == 3
+    fb.generate("s", [], [])           # a fails, b answers
+    assert a.calls == 1
     fb.generate("s", [], [])           # a is cooling down: straight to b
-    assert a.calls == 3 and b.calls == 2
+    assert a.calls == 1 and b.calls == 2
     now[0] = 61.0                      # cooldown over: a is tried again and recovers
     assert fb.generate("s", [], []).provider == "a"
     assert any("switched to a" in line for line in log)
