@@ -12,8 +12,16 @@ def _safe(path: str) -> Path:
     return p
 
 
+def _is_secret(p: Path) -> bool:
+    # Never let the model read API keys: .env, .env.local, ... (.env.example is fine)
+    return p.name.startswith(".env") and p.name != ".env.example"
+
+
 def read_file(path: str) -> str:
-    text = _safe(path).read_text(errors="replace")
+    target = _safe(path)
+    if _is_secret(target):
+        raise ValueError("refusing to read a secrets file")
+    text = target.read_text(errors="replace")
     if len(text) > MAX_CHARS:
         text = text[:MAX_CHARS] + "\n...[truncated]"
     return text

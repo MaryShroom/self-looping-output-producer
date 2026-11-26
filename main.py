@@ -1,20 +1,37 @@
-"""Minimal coding assistant: terminal chat + tool loop."""
-from llm import GeminiProvider
+"""Minimal coding assistant: terminal chat + tool loop, with provider failover."""
+import os
+from pathlib import Path
+
+from providers import build_provider
 from tools import TOOL_SPECS, run_tool
 
 SYSTEM = (
-    "You are Self-Looping Output Producer, SLOP for short, a coding assistant running in the user's terminal. "
+    "You are a coding assistant running in the user's terminal. "
     "Use the available tools to look at the user's project before answering "
     "questions about it. Be concise and accurate."
 )
 MAX_STEPS = 15  # safety cap on tool round-trips per user message
 
 
+def load_env(path: Path) -> None:
+    """Tiny .env loader (KEY=value lines). Real environment variables win over the file."""
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip().strip("'\"")
+        os.environ.setdefault(key, value)
+
+
 def run_turn(provider, history: list[dict]) -> None:
     """One user message -> model, run any requested tools, repeat until done."""
     for _ in range(MAX_STEPS):
         reply = provider.generate(SYSTEM, history, TOOL_SPECS)
-        history.append({"role": "assistant", "raw": reply.raw})
+        history.append(reply.to_message())
         if reply.text:
             print(f"\n{reply.text}\n")
         if not reply.tool_calls:
@@ -22,15 +39,25 @@ def run_turn(provider, history: list[dict]) -> None:
         for call in reply.tool_calls:
             print(f"  -> {call.name}({call.args})")
             history.append(
-                {"role": "tool", "name": call.name, "result": run_tool(call.name, call.args)}
+                {
+                    "role": "tool",
+                    "id": call.id,
+                    "name": call.name,
+                    "result": run_tool(call.name, call.args),
+                }
             )
     print("(stopped: too many tool steps)")
 
 
 def main() -> None:
-    provider = GeminiProvider()
+    # Look for .env next to this script first, then in the folder you launched from.
+    load_env(Path(__file__).resolve().parent / ".env")
+    load_env(Path.cwd() / ".env")
+
+    provider = build_provider()
     history: list[dict] = []
-    print("Coding assistant ready. Type a request, or 'exit' to quit.")
+    names = " -> ".join(p.name for p in provider.providers)
+    print(f"Coding assistant ready (providers: {names}). Type a request, or 'exit' to quit.")
     while True:
         try:
             user = input("> ").strip()

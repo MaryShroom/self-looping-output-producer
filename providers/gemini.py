@@ -1,40 +1,21 @@
-"""Provider layer.
-
-The rest of the app only deals with ToolCall / Reply and plain-dict messages.
-To support another provider later, write a class with the same `generate`
-method (e.g. AnthropicProvider, OpenAICompatProvider for Ollama and friends).
-"""
+"""Gemini adapter (google-genai SDK)."""
 import os
-from dataclasses import dataclass, field
-from typing import Any
 
 from google import genai
 from google.genai import types
 
-
-@dataclass
-class ToolCall:
-    name: str
-    args: dict
-
-
-@dataclass
-class Reply:
-    text: str
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    # Provider-specific message object. We keep it and send it back unchanged,
-    # because some Gemini models attach extra data (thought signatures) to
-    # function calls that must be returned as-is.
-    raw: Any = None
+from .base import Reply, ToolCall
 
 
 class GeminiProvider:
-    def __init__(self, model: str | None = None):
+    name = "gemini"
+
+    def __init__(self, model: str | None = None, api_key: str | None = None):
         self.model = model or os.environ.get("GEMINI_MODEL", "models/gemini-3.8-flash")
-        self.client = genai.Client()  # reads GEMINI_API_KEY from the environment
+        self.client = genai.Client(api_key=api_key) if api_key else genai.Client()
 
     def _to_contents(self, history: list[dict]) -> list:
-        """Convert our neutral history into Gemini's message format."""
+        """Convert neutral history into Gemini messages."""
         contents = []
         pending = []  # consecutive tool results are sent as one message
 
@@ -57,8 +38,20 @@ class GeminiProvider:
                 contents.append(
                     types.Content(role="user", parts=[types.Part.from_text(text=m["text"])])
                 )
-            else:  # assistant
-                contents.append(m["raw"])
+                continue
+            # assistant: reuse Gemini's own message if it wrote this turn,
+            # otherwise rebuild it from the neutral fields.
+            raw = (m.get("raw") or {}).get(self.name)
+            if raw is not None:
+                contents.append(raw)
+                continue
+            parts = []
+            if m.get("text"):
+                parts.append(types.Part.from_text(text=m["text"]))
+            for c in m.get("tool_calls") or []:
+                parts.append(types.Part.from_function_call(name=c["name"], args=c["args"]))
+            if parts:
+                contents.append(types.Content(role="model", parts=parts))
         flush()
         return contents
 
@@ -73,6 +66,7 @@ class GeminiProvider:
             # We run the tool loop ourselves instead of letting the SDK do it.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
+        # API errors propagate; FallbackProvider classifies them by status code.
         resp = self.client.models.generate_content(
             model=self.model,
             contents=self._to_contents(history),
@@ -84,4 +78,4 @@ class GeminiProvider:
         parts = content.parts or []
         text = "".join(p.text for p in parts if p.text and not p.thought)
         calls = [ToolCall(fc.name, dict(fc.args or {})) for fc in (resp.function_calls or [])]
-        return Reply(text=text, tool_calls=calls, raw=content)
+        return Reply(text=text, tool_calls=calls, provider=self.name, raw=content)
