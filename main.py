@@ -40,7 +40,8 @@ def run_turn(provider, history: list[dict]) -> None:
         if not reply.tool_calls:
             return
         for call in reply.tool_calls:
-            print(f"  -> {call.name}({call.args})")
+            shown = {k: (v[:60] + "…" if isinstance(v, str) and len(v) > 60 else v) for k, v in call.args.items()}
+            print(f"  -> {call.name}({shown})")
             history.append(
                 {
                     "role": "tool",
