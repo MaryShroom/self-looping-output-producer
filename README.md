@@ -1,4 +1,4 @@
-# Minimal coding assistant
+# Self-Looping Output Producer
 
 A tiny Claude Code-style agent: terminal chat + tool loop, with automatic
 failover between LLM providers (Gemini, Groq, Cerebras, OpenRouter, Ollama).
