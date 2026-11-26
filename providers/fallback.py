@@ -1,7 +1,15 @@
-"""Try providers in order; retry transient errors, then fail over to the next."""
+"""Try providers in order; retry transient errors, then fail over to the next.
+
+Error handling per provider:
+  - transient (503, timeout, ...): retry with backoff, then fail over
+  - rate limited (429):            fail over immediately
+  - misconfigured (401/403/404):   disabled for the rest of the session, fail over
+  - anything else (e.g. 400):      no retry, fail over (another model may cope)
+If every provider fails, the last error is raised.
+"""
 import time
 
-from .base import Reply, _status, is_rate_limited, is_transient
+from .base import Reply, _status, is_provider_fatal, is_rate_limited, is_transient
 
 
 def _short(exc: Exception) -> str:
@@ -35,26 +43,39 @@ class FallbackProvider:
         self._sleep = sleep
         self._clock = clock
         self._down_until: dict[str, float] = {}
+        self._disabled: dict[str, str] = {}  # name -> reason (bad key/model)
         self._last_used: str | None = None
 
     def _order(self) -> list:
-        """Healthy providers first (in configured order), cooling-down ones last."""
+        """Healthy providers first (in configured order), cooling-down ones last.
+        Providers disabled for a bad key/model are left out entirely."""
         now = self._clock()
-        ready = [p for p in self.providers if self._down_until.get(p.name, 0) <= now]
-        cooling = [p for p in self.providers if p not in ready]
+        alive = [p for p in self.providers if p.name not in self._disabled]
+        ready = [p for p in alive if self._down_until.get(p.name, 0) <= now]
+        cooling = [p for p in alive if p not in ready]
         return ready + cooling
 
     def generate(self, system: str, history: list[dict], tools: list[dict]) -> Reply:
         order = self._order()
+        if not order:
+            reasons = "; ".join(f"{n}: {r}" for n, r in self._disabled.items())
+            raise RuntimeError(f"No usable providers left. Fix your .env and restart. ({reasons})")
         last_exc: Exception | None = None
         for i, provider in enumerate(order):
             for attempt in range(self.retries + 1):
                 try:
                     reply = provider.generate(system, history, tools)
                 except Exception as exc:
-                    if not is_transient(exc):
-                        raise  # bad key, bad request, etc.: failing over would not help
                     last_exc = exc
+                    if is_provider_fatal(exc):
+                        self._disabled[provider.name] = _short(exc)
+                        self._notify(
+                            f"  [{provider.name}] disabled for this session "
+                            f"({_short(exc)}) - check its key/model in .env"
+                        )
+                        break
+                    if not is_transient(exc):
+                        break  # e.g. 400: retrying is pointless, another provider may cope
                     # A rate limit will not clear in a few seconds: switch right away.
                     if is_rate_limited(exc) or attempt == self.retries:
                         break
@@ -67,10 +88,13 @@ class FallbackProvider:
                 self._last_used = provider.name
                 self._down_until.pop(provider.name, None)
                 return reply
-            self._down_until[provider.name] = self._clock() + self.cooldown
-            if i + 1 < len(order):
-                self._notify(
-                    f"  [{provider.name}] unavailable ({_short(last_exc)}), "
-                    f"trying {order[i + 1].name}"
-                )
-        raise RuntimeError(f"All providers failed. Last error: {last_exc}") from last_exc
+            if provider.name not in self._disabled:
+                self._down_until[provider.name] = self._clock() + self.cooldown
+                if i + 1 < len(order):
+                    self._notify(
+                        f"  [{provider.name}] unavailable ({_short(last_exc)}), "
+                        f"trying {order[i + 1].name}"
+                    )
+            elif i + 1 < len(order):
+                self._notify(f"  trying {order[i + 1].name}")
+        raise RuntimeError(f"All providers failed. Last error: {_short(last_exc)}") from last_exc

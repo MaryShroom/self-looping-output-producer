@@ -78,16 +78,42 @@ def test_failover_message_includes_reason():
     assert any("429" in line and "trying b" in line for line in log), log
 
 
-def test_non_transient_error_raises():
+def test_bad_key_fails_over_and_provider_is_disabled_for_session():
     a, b = Fake("a", [FakeErr(401)]), Fake("b")
+    fb, log, sleeps, now = make([a, b])
+    assert fb.generate("s", [], []).provider == "b"
+    assert a.calls == 1 and sleeps == []          # no retries on a bad key
+    assert any("disabled for this session" in line and "401" in line for line in log), log
+    now[0] = 10_000.0                             # even much later, a is not tried again
+    assert fb.generate("s", [], []).provider == "b"
+    assert a.calls == 1
+
+
+def test_unknown_model_404_fails_over():
+    a, b = Fake("a", [FakeErr(404)]), Fake("b")
     fb, *_ = make([a, b])
-    try:
-        fb.generate("s", [], [])
-    except FakeErr:
-        pass
-    else:
-        raise AssertionError("expected FakeErr")
-    assert b.calls == 0
+    assert fb.generate("s", [], []).provider == "b"
+
+
+def test_bad_request_400_fails_over_without_retry_or_disable():
+    a, b = Fake("a", [FakeErr(400)]), Fake("b")
+    fb, log, sleeps, _ = make([a, b])
+    assert fb.generate("s", [], []).provider == "b"
+    assert a.calls == 1 and sleeps == []
+    assert "a" not in fb._disabled                # may work next time (e.g. different request)
+
+
+def test_all_bad_keys_raises_clear_error():
+    a, b = Fake("a", [FakeErr(401)]), Fake("b", [FakeErr(403)])
+    fb, *_ = make([a, b])
+    for _ in range(2):                            # first call: both fail; second: none left
+        try:
+            fb.generate("s", [], [])
+        except RuntimeError as e:
+            msg = str(e)
+        else:
+            raise AssertionError("expected RuntimeError")
+    assert "No usable providers left" in msg
 
 
 def test_cooldown_skips_failed_provider_then_retries_it():

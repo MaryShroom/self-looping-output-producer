@@ -66,6 +66,15 @@ def is_rate_limited(exc: Exception) -> bool:
     return _status(exc) == 429
 
 
+PROVIDER_FATAL_CODES = {401, 403, 404}  # bad key, no access, unknown model
+
+
+def is_provider_fatal(exc: Exception) -> bool:
+    """True when this provider is misconfigured (key/model). Retrying will never help,
+    but other providers have their own keys and models, so failing over still can."""
+    return _status(exc) in PROVIDER_FATAL_CODES
+
+
 def is_transient(exc: Exception) -> bool:
     """True for errors worth retrying or failing over on (overload, rate limit, network)."""
     if _status(exc) in TRANSIENT_CODES:
