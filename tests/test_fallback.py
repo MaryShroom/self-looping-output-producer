@@ -71,6 +71,13 @@ def test_rate_limit_switches_immediately():
     assert a.calls == 1 and sleeps == []
 
 
+def test_failover_message_includes_reason():
+    a, b = Fake("a", [FakeErr(429)]), Fake("b")
+    fb, log, *_ = make([a, b])
+    fb.generate("s", [], [])
+    assert any("429" in line and "trying b" in line for line in log), log
+
+
 def test_non_transient_error_raises():
     a, b = Fake("a", [FakeErr(401)]), Fake("b")
     fb, *_ = make([a, b])

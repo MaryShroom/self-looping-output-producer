@@ -1,12 +1,15 @@
 """Try providers in order; retry transient errors, then fail over to the next."""
 import time
 
-from .base import Reply, is_rate_limited, is_transient
+from .base import Reply, _status, is_rate_limited, is_transient
 
 
 def _short(exc: Exception) -> str:
-    lines = str(exc).splitlines() or [type(exc).__name__]
-    return lines[0][:120]
+    """One-line description: type, status code if any, and the start of the message."""
+    lines = str(exc).splitlines() or [""]
+    code = _status(exc)
+    head = f"{type(exc).__name__}" + (f" {code}" if code else "")
+    return f"{head}: {lines[0][:160]}"
 
 
 class FallbackProvider:
@@ -66,5 +69,8 @@ class FallbackProvider:
                 return reply
             self._down_until[provider.name] = self._clock() + self.cooldown
             if i + 1 < len(order):
-                self._notify(f"  [{provider.name}] unavailable, trying {order[i + 1].name}")
+                self._notify(
+                    f"  [{provider.name}] unavailable ({_short(last_exc)}), "
+                    f"trying {order[i + 1].name}"
+                )
         raise RuntimeError(f"All providers failed. Last error: {last_exc}") from last_exc
