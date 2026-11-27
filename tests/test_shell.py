@@ -64,14 +64,16 @@ def test_approved_command_runs_and_asks_once():
 def test_timeout_kills_command_and_its_children():
     e = Env()
     started = time.monotonic()
-    out = run("sleep 30 & sleep 30", timeout=1)   # a background child too
+    out = run("sleep 47.31 & sleep 47.32", timeout=1)   # a background child too
     elapsed = time.monotonic() - started
     assert "timed out after 1s" in out, out
     assert elapsed < 8, elapsed
     # nothing from this test is still running (dead zombies awaiting reaping don't count)
     time.sleep(0.3)
-    ps = os.popen("ps -eo stat=,comm=").read().splitlines()
-    live = [ln for ln in ps if ln.split(None, 1)[-1].strip() == "sleep" and not ln.startswith("Z")]
+    # Match this test's own unique durations, so unrelated `sleep` processes on the
+    # machine (desktop scripts, timers) can't cause a false failure.
+    ps = os.popen("ps -eo stat=,args=").read().splitlines()
+    live = [ln for ln in ps if "sleep 47.3" in ln and not ln.lstrip().startswith("Z")]
     assert live == [], live
 
 
@@ -163,7 +165,11 @@ def test_empty_command_is_an_error():
 
 def test_real_prompt_only_accepts_y():
     import builtins
+    import contextlib
+    import io
     original = builtins.input
+    quiet = contextlib.redirect_stdout(io.StringIO())  # hide the prompts' printed text
+    quiet.__enter__()
     try:
         for answer, expected in (("y", True), ("yes", True), ("a", False),
                                  ("n", False), ("", False)):
@@ -176,6 +182,7 @@ def test_real_prompt_only_accepts_y():
         assert shell._prompt_user("ls", 30, ".", []) is False
     finally:
         builtins.input = original
+        quiet.__exit__(None, None, None)
 
 
 def test_bash_is_registered_with_the_model():
