@@ -22,6 +22,28 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
 
 
+# Longest reply (in tokens) a provider may generate. Local small models can get stuck
+# repeating themselves until the request times out; a cap stops that. Others: no cap.
+DEFAULT_MAX_TOKENS = {"ollama": 4096}
+
+
+def _max_tokens(name: str):
+    """NAME_MAX_TOKENS from the environment: a number, or off/none/0 for no cap."""
+    var = f"{name.upper()}_MAX_TOKENS"
+    raw = _env(var).lower()
+    if not raw:
+        return DEFAULT_MAX_TOKENS.get(name)
+    if raw in ("off", "none", "0", "unlimited"):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigError(f"{var} must be a whole number (or off), not {raw!r}") from None
+    if value < 1:
+        raise ConfigError(f"{var} must be at least 1 (or off)")
+    return value
+
+
 def _build_one(name: str):
     if name == "gemini":
         key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
@@ -45,7 +67,8 @@ def _build_one(name: str):
             from .openai_compat import OpenAICompatProvider
 
             return OpenAICompatProvider(
-                name, _env(f"{name.upper()}_BASE_URL") or default_url, key, model
+                name, _env(f"{name.upper()}_BASE_URL") or default_url, key, model,
+                max_tokens=_max_tokens(name),
             )
         except ImportError as e:
             raise ConfigError(f"missing package ({e}); run pip install -r requirements.txt")

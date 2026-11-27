@@ -209,6 +209,67 @@ def test_read_and_list_still_work():
     assert "refusing to read" in tools.run_tool("read_file", {"path": ".env"})
 
 
+def test_unknown_argument_error_lists_valid_ones():
+    Env()
+    out = tools.run_tool("read_file", {"path": "a.txt", "toolbench_rust_version": "1.04.0"})
+    assert out.startswith("error: read_file:") and "unknown argument(s) ['toolbench_rust_version']" in out
+    assert "Valid arguments: ['path']" in out
+
+
+def test_missing_required_argument_error():
+    Env()
+    out = tools.run_tool("edit_file", {"path": "a.txt"})
+    assert "missing required argument(s) ['old_text', 'new_text']" in out
+    assert tools.run_tool("read_file", None).startswith("error: read_file: missing required")
+    assert "must be an object" in tools.run_tool("read_file", "a.txt")
+
+
+def test_unknown_tool_is_still_reported():
+    assert tools.run_tool("nope", {}) == "error: unknown tool nope"
+
+
+def test_preview_clips_lines_and_width_and_hides_control_characters():
+    os_env = tools.os.environ
+    os_env.pop("SLOP_SHOW_OUTPUT", None)
+    text = "\n".join(f"line {i}" for i in range(20))
+    out = tools.format_preview(text)
+    assert out.count("\n") == 8 and "... (12 more lines)" in out      # 8 lines + the "more" line
+    assert tools.format_preview("x" * 500).endswith("…") and len(tools.format_preview("x" * 500)) < 140
+    assert tools.format_preview("") == "    | (no output)"
+    evil = tools.format_preview("ok\x1b[2J\x1b]0;pwned\x07\rhidden")
+    assert "\x1b" not in evil and "\x07" not in evil and "\r" not in evil
+    assert "\\x1b" in evil
+
+
+def test_preview_can_be_switched_off():
+    tools.os.environ["SLOP_SHOW_OUTPUT"] = "off"
+    try:
+        assert tools.format_preview("hello") == ""
+    finally:
+        tools.os.environ.pop("SLOP_SHOW_OUTPUT", None)
+
+
+def test_failure_streak_counts_only_consecutive_tool_errors():
+    s = tools.FailureStreak(limit=4)
+    assert [s.record("error: nope") for _ in range(3)] == [False, False, False]
+    assert s.record("wrote a.txt") is False          # success resets the count
+    assert [s.record("error: nope") for _ in range(3)] == [False, False, False]
+    assert s.record("error: again") is True          # 4th in a row
+    s2 = tools.FailureStreak(limit=2)
+    s2.record("error: x")
+    assert s2.record("exit code: 1\ntests failed") is False    # a command failing is not a tool failure
+    s2.record("error: x")
+    assert s2.record(tools.DECLINED) is False and s2.count == 0   # declining is not a failure
+
+
+def test_approval_previews_escape_control_characters():
+    e = Env()
+    tools.run_tool("write_file", {"path": "evil\x1b[31m.txt", "content": "a\x1b[2K\rb\n"})
+    summary = e.asked[0]
+    assert "\x1b" not in summary and "\r" not in summary
+    assert "\\x1b" in summary
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -3,6 +3,7 @@
 Every change to a file goes through an approval step that shows a diff first.
 """
 import difflib
+import os
 import sys
 from pathlib import Path
 
@@ -79,10 +80,22 @@ def _clip(lines: list[str]) -> list[str]:
     return lines[:MAX_PREVIEW_LINES] + [f"... ({len(lines) - MAX_PREVIEW_LINES} more lines)"]
 
 
+def _visible(text: str) -> str:
+    """Show control characters (escape sequences, bidi overrides, ...) as \\x1b-style text.
+    Otherwise file contents could redraw the terminal and disguise what you are approving."""
+    out = []
+    for c in text:
+        if c.isprintable() or c == "\t":
+            out.append(c)
+        else:
+            out.append(f"\\x{ord(c):02x}" if ord(c) < 256 else f"\\u{ord(c):04x}")
+    return "".join(out)
+
+
 def _describe_new(rel: str, text: str) -> str:
     lines = text.splitlines()
-    body = _clip(["+" + line for line in lines])
-    return "\n".join([f"Create {rel} ({len(lines)} lines)"] + [_color(x) for x in body])
+    body = _clip(["+" + _visible(line) for line in lines])
+    return "\n".join([f"Create {_visible(rel)} ({len(lines)} lines)"] + [_color(x) for x in body])
 
 
 def _describe_change(rel: str, old: str, new: str) -> str:
@@ -91,7 +104,50 @@ def _describe_change(rel: str, old: str, new: str) -> str:
             old.splitlines(), new.splitlines(), f"a/{rel}", f"b/{rel}", lineterm=""
         )
     )
-    return "\n".join([f"Modify {rel}"] + [_color(x) for x in _clip(diff)])
+    return "\n".join([f"Modify {_visible(rel)}"] + [_color(_visible(x)) for x in _clip(diff)])
+
+
+# --- showing tool results in the terminal ----------------------------------------------
+
+SHOW_LINES = 8
+SHOW_WIDTH = 120
+
+
+def format_preview(result: str, max_lines: int = SHOW_LINES, width: int = SHOW_WIDTH) -> str:
+    """A short excerpt of a tool result for the terminal, so you can see what the model was
+    actually told (not just its summary). Set SLOP_SHOW_OUTPUT=off to hide it."""
+    if os.environ.get("SLOP_SHOW_OUTPUT", "on").strip().lower() in ("off", "0", "false", "no"):
+        return ""
+    lines = result.splitlines() or ["(no output)"]
+    shown = []
+    for line in lines[:max_lines]:
+        line = _visible(line)
+        shown.append(line if len(line) <= width else line[: width - 1] + "…")
+    if len(lines) > max_lines:
+        shown.append(f"... ({len(lines) - max_lines} more lines)")
+    text = "\n".join("    | " + line for line in shown)
+    return f"\033[2m{text}\033[0m" if sys.stdout.isatty() else text
+
+
+class FailureStreak:
+    """Counts consecutive failed tool calls so a model stuck in a loop can be stopped.
+
+    A failure is a result starting with "error:" (bad arguments, missing file, ...).
+    A command that runs and exits non-zero is not a failure, and neither is the user
+    declining a change. Any other result resets the count.
+    """
+
+    def __init__(self, limit: int = 4):
+        self.limit = limit
+        self.count = 0
+
+    def record(self, result: str) -> bool:
+        """Record one tool result. Returns True when the limit has been reached."""
+        if result.startswith("error:") and "the user declined" not in result[:60]:
+            self.count += 1
+        else:
+            self.count = 0
+        return self.count >= self.limit
 
 
 def _prompt_user(summary: str) -> bool:
@@ -285,10 +341,40 @@ TOOL_SPECS = [
 ]
 
 
+_SPEC_BY_NAME = {spec["name"]: spec for spec in TOOL_SPECS}
+
+
+def _check_args(name: str, args: dict):
+    """Clear error for wrong or missing arguments (models, small ones especially, invent them)."""
+    params = _SPEC_BY_NAME[name]["parameters"]
+    valid = sorted(params.get("properties", {}))
+    required = params.get("required", [])
+    unknown = sorted(set(args) - set(valid))
+    missing = [r for r in required if r not in args]
+    if not unknown and not missing:
+        return None
+    problems = []
+    if unknown:
+        problems.append(f"unknown argument(s) {unknown}")
+    if missing:
+        problems.append(f"missing required argument(s) {missing}")
+    return (
+        f"error: {name}: " + " and ".join(problems)
+        + f". Valid arguments: {valid} (required: {required or 'none'})"
+    )
+
+
 def run_tool(name: str, args: dict) -> str:
     fn = _IMPLS.get(name)
     if fn is None:
         return f"error: unknown tool {name}"
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        return f"error: {name}: arguments must be an object, got {type(args).__name__}"
+    problem = _check_args(name, args)
+    if problem:
+        return problem
     try:
         return fn(**args)
     except Exception as e:  # report failures to the model instead of crashing

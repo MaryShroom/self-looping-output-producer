@@ -1,17 +1,17 @@
 """Minimal coding assistant: terminal chat + tool loop, with provider failover."""
 import os
 import time
+import shell
 from pathlib import Path
 
 from providers import build_provider
-from tools import TOOL_SPECS, run_tool
+from agent import run_turn
 
 SYSTEM = (
     "You are a coding assistant running in the user's terminal. "
     "Use the available tools only when the request needs information from the user's project; "
     "answer greetings and general questions directly. Be concise and accurate."
 )
-MAX_STEPS = 15  # safety cap on tool round-trips per user message
 
 
 def load_env(path: Path) -> None:
@@ -26,31 +26,6 @@ def load_env(path: Path) -> None:
         key = key.strip().removeprefix("export ").strip()
         value = value.strip().strip("'\"")
         os.environ.setdefault(key, value)
-
-
-def run_turn(provider, history: list[dict]) -> None:
-    """One user message -> model, run any requested tools, repeat until done."""
-    for _ in range(MAX_STEPS):
-        started = time.monotonic()
-        reply = provider.generate(SYSTEM, history, TOOL_SPECS)
-        print(f"  ({reply.provider}, {time.monotonic() - started:.1f}s)")
-        history.append(reply.to_message())
-        if reply.text:
-            print(f"\n{reply.text}\n")
-        if not reply.tool_calls:
-            return
-        for call in reply.tool_calls:
-            shown = {k: (v[:60] + "…" if isinstance(v, str) and len(v) > 60 else v) for k, v in call.args.items()}
-            print(f"  -> {call.name}({shown})")
-            history.append(
-                {
-                    "role": "tool",
-                    "id": call.id,
-                    "name": call.name,
-                    "result": run_tool(call.name, call.args),
-                }
-            )
-    print("(stopped: too many tool steps)")
 
 
 def main() -> None:
@@ -72,9 +47,12 @@ def main() -> None:
             break
         if not user:
             continue
+        if user.startswith("/"):
+            print(shell.handle_slash(user) or "unknown command. Try /sandbox")
+            continue
         history.append({"role": "user", "text": user})
         try:
-            run_turn(provider, history)
+            run_turn(provider, history, SYSTEM)
         except Exception as e:
             print(f"error: {e}")
 

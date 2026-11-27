@@ -5,9 +5,10 @@ from .base import Reply, ToolCall
 
 
 class OpenAICompatProvider:
-    def __init__(self, name, base_url, api_key, model, timeout=30, client=None):
+    def __init__(self, name, base_url, api_key, model, timeout=30, client=None, max_tokens=None):
         self.name = name
         self.model = model
+        self.max_tokens = max_tokens  # cap on one reply's length (stops runaway loops)
         if client is None:
             from openai import OpenAI  # imported here so the module loads without the SDK
 
@@ -42,14 +43,17 @@ class OpenAICompatProvider:
         return msgs
 
     def generate(self, system: str, history: list[dict], tools: list[dict]) -> Reply:
+        extra = {"max_tokens": self.max_tokens} if self.max_tokens else {}
         resp = self.client.chat.completions.create(
             model=self.model,
             messages=self._to_messages(system, history),
             tools=[{"type": "function", "function": t} for t in tools],
+            **extra,
         )
         if not resp.choices:
             raise RuntimeError("The model returned no choices.")
-        msg = resp.choices[0].message
+        choice = resp.choices[0]
+        msg = choice.message
         calls = []
         for tc in msg.tool_calls or []:
             try:
@@ -57,4 +61,7 @@ class OpenAICompatProvider:
             except json.JSONDecodeError:
                 args = {}
             calls.append(ToolCall(name=tc.function.name, args=args, id=tc.id))
-        return Reply(text=msg.content or "", tool_calls=calls, provider=self.name)
+        text = msg.content or ""
+        if getattr(choice, "finish_reason", None) == "length":
+            text += "\n[reply was cut off at the max_tokens limit]"
+        return Reply(text=text, tool_calls=calls, provider=self.name)
