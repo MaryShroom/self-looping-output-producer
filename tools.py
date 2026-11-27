@@ -6,7 +6,9 @@ import difflib
 import sys
 from pathlib import Path
 
-ROOT = Path.cwd().resolve()  # the agent only touches files under where you launch it
+import shell
+
+ROOT =Path.cwd().resolve()  # the agent only touches files under where you launch it
 MAX_CHARS = 20_000
 MAX_PREVIEW_LINES = 60
 
@@ -185,11 +187,16 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     return f"edited {rel}"
 
 
+def bash(command: str, timeout: int = shell.DEFAULT_TIMEOUT) -> str:
+    return shell.run_command(command, timeout, cwd=ROOT)
+
+
 _IMPLS = {
     "read_file": read_file,
     "list_files": list_files,
     "write_file": write_file,
     "edit_file": edit_file,
+    "bash": bash,
 }
 
 # Neutral JSON-schema tool descriptions (also valid for most other providers).
@@ -251,6 +258,28 @@ TOOL_SPECS = [
                 "content": {"type": "string", "description": "The full new content of the file."},
             },
             "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "bash",
+        "description": (
+            "Run a shell command in the project folder and return its exit code and output "
+            "(stdout and stderr combined). Use it for things like running tests, git, or "
+            "package managers. Do not use it to read or edit files (use read_file, list_files "
+            "and edit_file) or to search for secrets. There is no interactive input, so "
+            "commands that prompt will fail; use non-interactive flags. The user must approve "
+            "every command."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to run."},
+                "timeout": {
+                    "type": "integer",
+                    "description": "Seconds before the command is killed (default 30, max 120).",
+                },
+            },
+            "required": ["command"],
         },
     },
 ]
