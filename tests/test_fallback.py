@@ -14,9 +14,13 @@ from providers.openai_compat import OpenAICompatProvider  # noqa: E402
 
 
 class FakeErr(Exception):
-    def __init__(self, code):
-        super().__init__(f"{code} error from fake provider")
+    def __init__(self, code, message=None):
+        super().__init__(message or f"{code} error from fake provider")
         self.code = code
+
+
+SIGNATURE_400 = ("400 INVALID_ARGUMENT. Function call is missing a thought_signature in "
+                 "functionCall parts. This is required for tools to work correctly")
 
 
 class Fake:
@@ -115,6 +119,45 @@ def test_bad_request_400_fails_over_without_retry_or_disable():
     assert fb.generate("s", [], []).provider == "b"
     assert a.calls == 1 and sleeps == []
     assert "a" not in fb._disabled                # may work next time (e.g. different request)
+
+
+def test_thought_signature_400_skips_that_provider_for_the_session():
+    a, b = Fake("a", [FakeErr(400, SIGNATURE_400)]), Fake("b")
+    fb, log, sleeps, now = make([a, b])
+    assert fb.generate("s", [], []).provider == "b"
+    assert a.calls == 1 and sleeps == []                      # no retry
+    assert any("[a] can't continue this conversation" in line and "skipping it" in line
+               for line in log), log
+    now[0] = 10_000.0                                         # even long after any cooldown
+    for _ in range(3):
+        assert fb.generate("s", [], []).provider == "b"
+    assert a.calls == 1                                       # never tried again
+
+
+def test_a_plain_400_is_still_only_a_failover_not_a_skip():
+    a, b = Fake("a", [FakeErr(400, "400 INVALID_ARGUMENT: bad schema")]), Fake("b")
+    fb, log, *_ = make([a, b])
+    fb.generate("s", [], [])
+    assert "a" not in fb._disabled
+    assert not any("skipping it for this session" in line for line in log)
+
+
+def test_thought_signature_text_without_a_400_is_not_special():
+    a, b = Fake("a", [FakeErr(503, "thought_signature overloaded")]), Fake("b")
+    fb, *_ = make([a, b])
+    fb.generate("s", [], [])
+    assert "a" not in fb._disabled
+
+
+def test_if_the_only_provider_cannot_continue_the_error_is_clear():
+    a = Fake("a", [FakeErr(400, SIGNATURE_400)])
+    fb, *_ = make([a])
+    for _ in range(2):
+        try:
+            fb.generate("s", [], [])
+        except RuntimeError as e:
+            msg = str(e)
+    assert "No usable providers left" in msg and "another provider's tool calls" in msg
 
 
 def test_all_bad_keys_raises_clear_error():

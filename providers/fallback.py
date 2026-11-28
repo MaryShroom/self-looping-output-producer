@@ -7,12 +7,16 @@ Error handling per provider:
                                    on repeat failures, up to 10 min)
   - rate limited (429):            fail over immediately
   - misconfigured (401/403/404):   disabled for the rest of the session, fail over
+  - history it cannot continue:    Gemini rejecting another provider's tool calls (400
+                                   "thought_signature"): skipped for the rest of the session
   - anything else (e.g. 400):      no retry, fail over (another model may cope)
 If every provider fails, the last error is raised.
 """
 import time
 
-from .base import Reply, _status, is_provider_fatal, is_rate_limited, is_transient
+from .base import (
+    Reply, _status, is_history_rejected, is_provider_fatal, is_rate_limited, is_transient,
+)
 
 
 def _short(exc: Exception) -> str:
@@ -66,7 +70,8 @@ class FallbackProvider:
         order = self._order()
         if not order:
             reasons = "; ".join(f"{n}: {r}" for n, r in self._disabled.items())
-            raise RuntimeError(f"No usable providers left. Fix your .env and restart. ({reasons})")
+            raise RuntimeError(
+                f"No usable providers left ({reasons}). Check your .env, or restart SLOP to try again.")
         last_exc: Exception | None = None
         for i, provider in enumerate(order):
             # Only retry (with backoff) when nothing else is left to try. With another
@@ -83,6 +88,13 @@ class FallbackProvider:
                             f"  [{provider.name}] disabled for this session "
                             f"({_short(exc)}) - check its key/model in .env"
                         )
+                        break
+                    if is_history_rejected(exc):
+                        self._disabled[provider.name] = (
+                            "cannot continue a conversation that holds another provider's tool calls")
+                        self._notify(
+                            f"  [{provider.name}] can't continue this conversation after another "
+                            "provider's tool calls, skipping it for this session")
                         break
                     if not is_transient(exc):
                         break  # e.g. 400: retrying is pointless, another provider may cope

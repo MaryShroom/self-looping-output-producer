@@ -75,6 +75,13 @@ def is_provider_fatal(exc: Exception) -> bool:
     return _status(exc) in PROVIDER_FATAL_CODES
 
 
+def is_history_rejected(exc: Exception) -> bool:
+    """True when Gemini refuses the conversation because tool calls made by another provider
+    carry no thought signature. Every later request would fail the same way, so the
+    provider is skipped for the rest of the session instead of being tried again."""
+    return _status(exc) == 400 and "thought_signature" in str(exc).lower()
+
+
 def is_transient(exc: Exception) -> bool:
     """True for errors worth retrying or failing over on (overload, rate limit, network)."""
     if _status(exc) in TRANSIENT_CODES:
