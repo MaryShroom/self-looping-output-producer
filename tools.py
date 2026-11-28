@@ -1,15 +1,17 @@
-"""Tools the model can call: read_file, list_files, write_file, edit_file.
+"""Tools the model can call: read_file, list_files, grep, glob, write_file, edit_file, bash.
 
-Every change to a file goes through an approval step that shows a diff first.
+Every change to a file goes through an approval step that shows a diff first;
+every shell command needs approval too (see shell.py).
 """
 import difflib
 import os
 import sys
 from pathlib import Path
 
+import search
 import shell
 
-ROOT =Path.cwd().resolve()  # the agent only touches files under where you launch it
+ROOT = Path.cwd().resolve()  # the agent only touches files under where you launch it
 MAX_CHARS = 20_000
 MAX_PREVIEW_LINES = 60
 
@@ -249,6 +251,18 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
     return f"edited {rel}"
 
 
+def grep_tool(pattern: str, path: str = ".", include=None, ignore_case=False, literal=False,
+              max_results=search.DEFAULT_GREP_RESULTS) -> str:
+    target = _safe(path)
+    if _is_secret(target):
+        raise ValueError("refusing to search a secrets file")
+    return search.grep_files(ROOT, target, pattern, include, ignore_case, literal, max_results)
+
+
+def glob_tool(pattern: str, path: str = ".", max_results=search.DEFAULT_GLOB_RESULTS) -> str:
+    return search.find_files(ROOT, _safe(path), pattern, max_results)
+
+
 def bash(command: str, timeout: int = shell.DEFAULT_TIMEOUT) -> str:
     return shell.run_command(command, timeout, cwd=ROOT)
 
@@ -258,6 +272,8 @@ _IMPLS = {
     "list_files": list_files,
     "write_file": write_file,
     "edit_file": edit_file,
+    "grep": grep_tool,
+    "glob": glob_tool,
     "bash": bash,
 }
 
@@ -327,8 +343,9 @@ TOOL_SPECS = [
         "description": (
             "Run a shell command in the project folder and return its exit code and output "
             "(stdout and stderr combined). Use it for things like running tests, git, or "
-            "package managers. Do not use it to read or edit files (use read_file, list_files "
-            "and edit_file) or to search for secrets. There is no interactive input, so "
+            "package managers. Do not use it to read, search or edit files (use read_file, "
+            "list_files, grep, glob and edit_file) or to look for secrets. There is no "
+            "interactive input, so "
             "commands that prompt will fail; use non-interactive flags. The user must approve "
             "every command."
         ),
@@ -344,6 +361,63 @@ TOOL_SPECS = [
             "required": ["command"],
         },
     },
+    {
+        "name": "grep",
+        "description": (
+            "Search the contents of files for a regular expression (Python syntax). Returns "
+            "matching lines as 'path:line: text'. Skips .git, virtual environments, "
+            "node_modules, binary files, files over 1 MB and .env files. Use `include` to limit "
+            "which files are searched (for example '*.py'); use read_file to see a file in full."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regular expression to search for."},
+                "path": {
+                    "type": "string",
+                    "description": "Folder or file to search, relative to the project root. Defaults to '.'.",
+                },
+                "include": {
+                    "type": "string",
+                    "description": "Only search files matching this glob, e.g. '*.py' or 'src/**/*.ts'.",
+                },
+                "ignore_case": {"type": "boolean", "description": "Case-insensitive. Default false."},
+                "literal": {
+                    "type": "boolean",
+                    "description": "Treat pattern as plain text instead of a regular expression. Default false.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum matching lines to return (default 100, max 500).",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "glob",
+        "description": (
+            "Find files by name pattern. Examples: '**/*.py' (all Python files), "
+            "'tests/test_*.py', '*.{md,txt}'. A pattern without '/' (like '*.py') matches file "
+            "names at any depth. Returns paths relative to the project root; skips .git, "
+            "virtual environments and node_modules."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.py'."},
+                "path": {
+                    "type": "string",
+                    "description": "Folder to search in, relative to the project root. Defaults to '.'.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum paths to return (default 200, max 1000).",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
 ]
 
 
@@ -355,6 +429,8 @@ def _wrong_type(value, expected) -> bool:
     whole numbers as floats (30.0), and some models send numbers as strings ("30")."""
     if expected == "string":
         return not isinstance(value, str)
+    if expected == "boolean":
+        return not (isinstance(value, bool) or (isinstance(value, str) and value.lower() in ("true", "false")))
     if expected == "integer":
         if isinstance(value, bool):
             return True
@@ -407,6 +483,7 @@ def run_tool(name: str, args: dict) -> str:
         args = {}
     if not isinstance(args, dict):
         return f"error: {name}: arguments must be an object, got {type(args).__name__}"
+    args = {k: v for k, v in args.items() if v is not None}   # null means "not given"
     problem = _check_args(name, args)
     if problem:
         return problem

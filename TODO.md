@@ -13,6 +13,6 @@
 
 ## Next
 - [x] `write_file` / `edit_file` with confirmation prompt
-- [ ] `bash` tool with confirmation
+- [x] `bash` tool with confirmation
 - [ ] Search tools (grep, glob)
 - [ ] Context management
