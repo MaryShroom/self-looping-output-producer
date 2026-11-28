@@ -103,6 +103,29 @@ and there is no network by default. Switch it while running:
 
 `/help` lists every command.
 
+## Long conversations
+
+Every request carries the whole conversation, so long sessions get big and slow, and small models
+(and some free tiers) have small windows. SLOP keeps each request under a per-provider limit:
+
+1. tool output from older turns is shortened (the model has already used it),
+2. if that is not enough, the oldest turns are left out, whole, so no tool result ever loses its call,
+3. as a last resort the current turn's own tool output is shortened, oldest first.
+
+Your stored conversation is never changed, so after a failover a provider with a bigger window still
+sees everything. When trimming starts you get one notice, e.g.
+`[context trimmed for ollama: older messages are left out ...]`.
+
+```
+/context   conversation size and each provider's limit, and whether it is being trimmed
+/clear     forget the conversation and start fresh
+```
+
+Limits are in characters (about 4 per token) for the whole request, including the system prompt and
+tool descriptions. Defaults are conservative: Ollama 16,000, Groq 40,000, everything else 200,000.
+Change them with `<PROVIDER>_CONTEXT_CHARS` or `SLOP_CONTEXT_CHARS` (a number, or `off`). Ollama's own
+context window is set on the Ollama side and is often small; raise it there if you raise the limit here.
+
 It is a strong barrier, not a virtual machine. Setup (including the Ubuntu 24.04 AppArmor
 note) and its limits are in [SANDBOX.md](SANDBOX.md).
 
@@ -114,7 +137,7 @@ note) and its limits are in [SANDBOX.md](SANDBOX.md).
 - `tools.py` — tool implementations, schemas, argument checking, approval prompts
 - `search.py` — `grep` and `glob`
 - `shell.py` — the `bash` tool and the bubblewrap sandbox
-- `providers/` — Gemini and OpenAI-compatible adapters, plus the failover wrapper
+- `providers/` — Gemini and OpenAI-compatible adapters, the failover wrapper and `context.py` (fits history to each provider's limit)
 
 ## Tests
 
@@ -143,4 +166,5 @@ The three real-sandbox tests skip themselves when bubblewrap is not usable.
 | `SLOP_SANDBOX_NETWORK`     | `off` (default) or `on`                                    |
 | `SLOP_SANDBOX_RO`          | Extra read-only folders inside the sandbox                 |
 | `SLOP_SHOW_OUTPUT`         | `off` hides the `\|` result previews                       |
+| `<PROVIDER>_CONTEXT_CHARS` | Request size limit in characters (`SLOP_CONTEXT_CHARS` for all) |
 | `<PROVIDER>_MAX_TOKENS`    | Cap on reply length (Ollama defaults to 4096)              |

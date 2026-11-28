@@ -2,6 +2,8 @@
 
 Run:  python tests/test_tools.py     (or: pytest)
 """
+import contextlib
+import io
 import sys
 import tempfile
 from pathlib import Path
@@ -9,6 +11,28 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tools  # noqa: E402
+
+
+class _FakeTTY(io.StringIO):
+    def isatty(self):
+        return True
+
+
+@contextlib.contextmanager
+def stdout_as(tty):
+    """Run with stdout pretending to be (or not to be) a terminal, so results do not depend on
+    whether the tests are run in a terminal (SLOP adds its own colours only on a terminal)."""
+    with contextlib.redirect_stdout(_FakeTTY() if tty else io.StringIO()):
+        yield
+
+
+SLOP_COLOURS = ("\033[32m", "\033[31m", "\033[2m", "\033[0m")      # the only codes SLOP adds itself
+
+
+def without_slop_colours(text):
+    for code in SLOP_COLOURS:
+        text = text.replace(code, "")
+    return text
 
 
 class Env:
@@ -231,14 +255,24 @@ def test_unknown_tool_is_still_reported():
 def test_preview_clips_lines_and_width_and_hides_control_characters():
     os_env = tools.os.environ
     os_env.pop("SLOP_SHOW_OUTPUT", None)
-    text = "\n".join(f"line {i}" for i in range(20))
-    out = tools.format_preview(text)
-    assert out.count("\n") == 8 and "... (12 more lines)" in out      # 8 lines + the "more" line
-    assert tools.format_preview("x" * 500).endswith("…") and len(tools.format_preview("x" * 500)) < 140
-    assert tools.format_preview("") == "    | (no output)"
-    evil = tools.format_preview("ok\x1b[2J\x1b]0;pwned\x07\rhidden")
-    assert "\x1b" not in evil and "\x07" not in evil and "\r" not in evil
-    assert "\\x1b" in evil
+    with stdout_as(tty=False):
+        text = "\n".join(f"line {i}" for i in range(20))
+        out = tools.format_preview(text)
+        assert out.count("\n") == 8 and "... (12 more lines)" in out      # 8 lines + the "more" line
+        assert tools.format_preview("x" * 500).endswith("…") and len(tools.format_preview("x" * 500)) < 140
+        assert tools.format_preview("") == "    | (no output)"
+        evil = tools.format_preview("ok\x1b[2J\x1b]0;pwned\x07\rhidden")
+        assert "\x1b" not in evil and "\x07" not in evil and "\r" not in evil
+        assert "\\x1b" in evil
+
+
+def test_preview_in_a_terminal_only_adds_slop_own_colour():
+    with stdout_as(tty=True):
+        evil = tools.format_preview("ok\x1b[2J\x1b]0;pwned\x07\rhidden")
+    assert evil.startswith("\033[2m") and evil.endswith("\033[0m")     # dimmed by SLOP
+    plain = without_slop_colours(evil)
+    assert "\x1b" not in plain and "\x07" not in plain and "\r" not in plain
+    assert "\\x1b" in plain
 
 
 def test_preview_can_be_switched_off():
@@ -263,11 +297,13 @@ def test_failure_streak_counts_only_consecutive_tool_errors():
 
 
 def test_approval_previews_escape_control_characters():
-    e = Env()
-    tools.run_tool("write_file", {"path": "evil\x1b[31m.txt", "content": "a\x1b[2K\rb\n"})
-    summary = e.asked[0]
-    assert "\x1b" not in summary and "\r" not in summary
-    assert "\\x1b" in summary
+    for tty in (False, True):
+        e = Env()
+        with stdout_as(tty):
+            tools.run_tool("write_file", {"path": "evil\x1b[31m.txt", "content": "a\x1b[2K\rb\n"})
+        summary = without_slop_colours(e.asked[0])       # in a terminal SLOP colours +/- lines itself
+        assert "\x1b" not in summary and "\r" not in summary, tty
+        assert "\\x1b" in summary, tty
 
 
 def test_visible_text_keeps_layout_but_escapes_control_characters():

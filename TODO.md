@@ -13,18 +13,19 @@
 - [x] bubblewrap sandbox, switchable at runtime (`/sandbox`), `.env` hidden, network off by default
 - [x] Hardening: path confinement, `.env` and `.git` protection, argument type checks,
       terminal escape sanitising, bounded `read_file` (offset/limit)
+- [x] Context management: per-provider limits, old tool output shortened, oldest turns dropped, `/context`, `/clear`
 - [x] Gemini that rejects another provider's tool calls (400 thought_signature) is skipped for the session
 - [x] `/auto files|shell on|off` switch (shell auto-approve only for sandboxed, safe-looking commands)
 - [x] `grep` and `glob` (pure Python, capped, skips noise folders)
 - [x] Offline test suite (fake providers, fake bwrap, real-bwrap tests that skip when unavailable)
 
 ## Next
-- [ ] Context management: trim or summarise old tool output so long sessions do not overflow
-      small context windows (matters most on fallback providers and Ollama)
-- [ ] Handle smaller context windows when failing over to another provider
 - [ ] Only list models with reliable tool calling in the fallback chain (document which ones)
 
 ## Later
+- [ ] Summarise dropped turns (a model-written recap) instead of just leaving them out; could grow
+      into notes that persist between sessions
+- [ ] Count real tokens (provider usage numbers) instead of characters
 - [ ] Let Gemini rejoin mid-conversation after another provider's tool calls (placeholder
       thought signature; check Google's docs first)
 - [ ] TUI / GUI (long commands and diffs do not fit a small terminal window)

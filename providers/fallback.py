@@ -12,8 +12,10 @@ Error handling per provider:
   - anything else (e.g. 400):      no retry, fail over (another model may cope)
 If every provider fails, the last error is raised.
 """
+import json
 import time
 
+from . import context
 from .base import (
     Reply, _status, is_history_rejected, is_provider_fatal, is_rate_limited, is_transient,
 )
@@ -56,6 +58,7 @@ class FallbackProvider:
         self._down_until: dict[str, float] = {}
         self._disabled: dict[str, str] = {}  # name -> reason (bad key/model)
         self._last_used: str | None = None
+        self._trim_announced: dict[str, bool] = {}   # per provider: already told the user
 
     def _order(self) -> list:
         """Healthy providers first (in configured order), cooling-down ones last.
@@ -65,6 +68,21 @@ class FallbackProvider:
         ready = [p for p in alive if self._down_until.get(p.name, 0) <= now]
         cooling = [p for p in alive if p not in ready]
         return ready + cooling
+
+    def _fit(self, provider, system: str, history: list[dict], tools: list[dict]) -> list[dict]:
+        """The history as this provider should see it (shortened if it has a size limit)."""
+        limit = getattr(provider, "context_chars", None)
+        if not limit:
+            return history
+        overhead = len(system) + len(json.dumps(tools, default=str))
+        view, stats = context.fit(history, max(limit - overhead, context.MIN_BUDGET))
+        if stats["dropped"] and not self._trim_announced.get(provider.name):
+            self._notify(
+                f"  [context trimmed for {provider.name}: older messages are left out "
+                f"to fit its {limit // 1000}k-character limit (see /context)]"
+            )
+        self._trim_announced[provider.name] = bool(stats["dropped"])   # resets after /clear
+        return view
 
     def generate(self, system: str, history: list[dict], tools: list[dict]) -> Reply:
         order = self._order()
@@ -77,9 +95,10 @@ class FallbackProvider:
             # Only retry (with backoff) when nothing else is left to try. With another
             # provider available, switching is faster than waiting on a struggling one.
             max_attempts = self.retries + 1 if i + 1 == len(order) else 1
+            view = self._fit(provider, system, history, tools)
             for attempt in range(max_attempts):
                 try:
-                    reply = provider.generate(system, history, tools)
+                    reply = provider.generate(system, view, tools)
                 except Exception as exc:
                     last_exc = exc
                     if is_provider_fatal(exc):

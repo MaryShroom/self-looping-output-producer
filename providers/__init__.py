@@ -44,6 +44,32 @@ def _max_tokens(name: str):
     return value
 
 
+# Most text (history + system prompt + tool descriptions, in characters, ~4 per token) sent in
+# one request. Older conversation is shortened or left out beyond this. These are conservative
+# guesses: small local models and free tiers have small windows. Change them in .env.
+DEFAULT_CONTEXT_CHARS = {"ollama": 16_000, "groq": 40_000}
+FALLBACK_CONTEXT_CHARS = 200_000
+MIN_CONTEXT_CHARS = 4_000
+
+
+def _context_chars(name: str):
+    """<NAME>_CONTEXT_CHARS, else SLOP_CONTEXT_CHARS, else the default. off/0 = no limit."""
+    for var in (f"{name.upper()}_CONTEXT_CHARS", "SLOP_CONTEXT_CHARS"):
+        raw = _env(var).lower()
+        if not raw:
+            continue
+        if raw in ("off", "none", "0", "unlimited"):
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            raise ConfigError(f"{var} must be a whole number (or off), not {raw!r}") from None
+        if value < MIN_CONTEXT_CHARS:
+            raise ConfigError(f"{var} must be at least {MIN_CONTEXT_CHARS} (or off)")
+        return value
+    return DEFAULT_CONTEXT_CHARS.get(name, FALLBACK_CONTEXT_CHARS)
+
+
 def _build_one(name: str):
     if name == "gemini":
         key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
@@ -53,7 +79,9 @@ def _build_one(name: str):
             from .gemini import GeminiProvider
         except ImportError as e:
             raise ConfigError(f"missing package ({e}); run pip install -r requirements.txt")
-        return GeminiProvider(model=_env("GEMINI_MODEL") or None, api_key=key)
+        provider = GeminiProvider(model=_env("GEMINI_MODEL") or None, api_key=key)
+        provider.context_chars = _context_chars(name)
+        return provider
 
     if name in OPENAI_COMPAT:
         default_url, key_var, model_var = OPENAI_COMPAT[name]
@@ -66,10 +94,12 @@ def _build_one(name: str):
         try:
             from .openai_compat import OpenAICompatProvider
 
-            return OpenAICompatProvider(
+            provider = OpenAICompatProvider(
                 name, _env(f"{name.upper()}_BASE_URL") or default_url, key, model,
                 max_tokens=_max_tokens(name),
             )
+            provider.context_chars = _context_chars(name)
+            return provider
         except ImportError as e:
             raise ConfigError(f"missing package ({e}); run pip install -r requirements.txt")
 

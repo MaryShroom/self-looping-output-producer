@@ -48,7 +48,7 @@ def main() -> None:
         if not user:
             continue
         if user.startswith("/"):
-            print(commands.handle_slash(user) or "unknown command. Try /help")
+            print(commands.handle_slash(user, history, provider) or "unknown command. Try /help")
             continue
         history.append({"role": "user", "text": user})
         try:

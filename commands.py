@@ -7,6 +7,7 @@ approval prompts.
 """
 import shell
 import tools
+from providers import context
 
 ask = input  # replaceable in tests
 
@@ -17,6 +18,8 @@ HELP = (
     "  /auto shell on|off  run sandboxed, safe-looking commands without asking\n"
     "  /auto off           turn both off\n"
     "  /sandbox ...        shell sandbox settings (try /sandbox)\n"
+    "  /context            how big the conversation is, and each provider's limit\n"
+    "  /clear              forget the conversation so far and start fresh\n"
     "  /help               this text\n"
     "  exit                quit"
 )
@@ -82,7 +85,25 @@ def _auto(args: list[str]) -> str:
     return AUTO_USAGE
 
 
-def handle_slash(line: str):
+def context_status(history, provider) -> str:
+    used = context.total(history)
+    lines = [f"conversation: {len(history)} messages, about {used:,} characters "
+             f"(~{used // 4:,} tokens)"]
+    for p in getattr(provider, "providers", []):
+        limit = getattr(p, "context_chars", None)
+        if not limit:
+            lines.append(f"  {p.name}: no limit set")
+            continue
+        _, stats = context.fit(history, max(limit - 6000, context.MIN_BUDGET))   # ~6k for prompt+tools
+        cut = (f"; older messages are being trimmed ({stats['dropped']} left out)"
+               if stats["dropped"] else "; old tool output shortened" if stats["shrunk"] else "")
+        lines.append(f"  {p.name}: limit {limit:,} characters, {used * 100 // limit}% used{cut}")
+    lines.append("(set <PROVIDER>_CONTEXT_CHARS or SLOP_CONTEXT_CHARS in .env to change a limit; "
+                 "/clear starts over)")
+    return "\n".join(lines)
+
+
+def handle_slash(line: str, history=None, provider=None):
     """Returns the text to print, or None when the line is not a command we know."""
     parts = line.strip().split()
     if not parts or not parts[0].startswith("/"):
@@ -92,6 +113,12 @@ def handle_slash(line: str):
         return shell.handle_slash(line)
     if name == "/auto":
         return _auto(args)
+    if name == "/context" and history is not None:
+        return context_status(history, provider)
+    if name == "/clear" and history is not None:
+        count = len(history)
+        history.clear()
+        return f"cleared {count} messages. Starting fresh."
     if name in ("/help", "/?"):
         return HELP
     return None
