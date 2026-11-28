@@ -98,6 +98,17 @@ def test_step_limit_ends_cleanly():
     assert_well_formed(history)
 
 
+def test_terminal_codes_in_the_models_reply_are_shown_not_obeyed():
+    reply = {"text": "safe\x1b[2Jhidden\rX\x07\nsecond line\twith tab"}
+    history, out = run(Scripted(reply))
+    printed = "\n".join(out)
+    for raw in ("\x1b", "\r", "\x07"):
+        assert raw not in printed, repr(raw)
+    assert "\\x1b[2J" in printed
+    assert "\nsecond line\twith tab" in printed       # line breaks and tabs are kept
+    assert history[-1]["text"] == reply["text"]        # what the model said is stored unchanged
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

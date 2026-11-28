@@ -112,8 +112,13 @@ def test_timeout_is_clamped():
     e = Env()
     run("true", timeout=9999)
     run("true", timeout=-5)
-    run("true", timeout="abc")
-    assert [a[1] for a in e.asked] == [shell.MAX_TIMEOUT, 1, shell.DEFAULT_TIMEOUT]
+    assert [a[1] for a in e.asked] == [shell.MAX_TIMEOUT, 1]
+    # through the tool, a non-numeric timeout is rejected before any prompt...
+    assert run("true", timeout="abc").startswith("error: bash: argument 'timeout'")
+    assert len(e.asked) == 2
+    # ...while calling run_command directly still falls back to the default
+    shell.run_command("true", "abc")
+    assert e.asked[-1][1] == shell.DEFAULT_TIMEOUT
 
 
 def test_stdin_is_closed_so_interactive_commands_do_not_hang():
@@ -265,7 +270,7 @@ def test_bwrap_argv_shape_and_protections():
     assert _triple(argv, "--ro-bind", "/usr", "/usr")
     assert _triple(argv, "--bind", root, root)                         # project is writable
     assert argv[argv.index("--chdir") + 1] == root
-    # .env files are replaced by empty files; .env.example, pruned and too-deep ones are not
+    # .env files are covered by an unreadable placeholder; .env.example, pruned and too-deep ones are not
     assert _triple(argv, "--ro-bind", "/dev/null", f"{root}/.env")
     assert _triple(argv, "--ro-bind", "/dev/null", f"{root}/sub/.env.local")
     assert f"{root}/.env.example" not in argv
@@ -472,7 +477,7 @@ def test_real_bwrap_hides_home_and_secrets_and_blocks_writes():
     e.make(".git/config", "[core]")
     out = run("echo works; cat ok.txt; cat .env; ls /home 2>&1; ls ~ 2>&1 | head -1")
     assert "works" in out and "visible" in out, out
-    assert "TOP_SECRET_VALUE" not in out, out                 # .env is an empty file in there
+    assert "TOP_SECRET_VALUE" not in out, out                 # .env is unreadable in there (EACCES)
     assert os.path.expanduser("~") not in out, out            # the real home path never shows up
     assert "exit code: 0" in run("touch created_inside")      # project is writable
     assert (e.root / "created_inside").exists()
@@ -520,6 +525,17 @@ def test_control_characters_are_made_visible_in_the_command_prompt():
     assert "\x1b" not in text and "‮" not in text and "\r" not in text
     assert "\\x1b" in text and "\\u202e" in text
     assert "rm -rf ~" in text          # the real command is still shown, not hidden
+
+
+def test_run_command_rejects_non_string_commands_directly():
+    Env()
+    for bad in ({"command": "ls"}, ["ls"], 5):
+        try:
+            shell.run_command(bad)
+        except ValueError as e:
+            assert "must be a string" in str(e)
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
 
 
 if __name__ == "__main__":

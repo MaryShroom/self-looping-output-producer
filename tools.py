@@ -92,6 +92,12 @@ def _visible(text: str) -> str:
     return "".join(out)
 
 
+def visible_text(text: str) -> str:
+    """Like _visible, for multi-line text such as the model's replies: line breaks and tabs
+    stay, everything else that could control the terminal is shown as \\x1b-style text."""
+    return "\n".join(_visible(line) for line in text.split("\n"))
+
+
 def _describe_new(rel: str, text: str) -> str:
     lines = text.splitlines()
     body = _clip(["+" + _visible(line) for line in lines])
@@ -344,6 +350,28 @@ TOOL_SPECS = [
 _SPEC_BY_NAME = {spec["name"]: spec for spec in TOOL_SPECS}
 
 
+def _wrong_type(value, expected) -> bool:
+    """Does `value` not fit the JSON-schema type? Lenient where providers differ: Gemini sends
+    whole numbers as floats (30.0), and some models send numbers as strings ("30")."""
+    if expected == "string":
+        return not isinstance(value, str)
+    if expected == "integer":
+        if isinstance(value, bool):
+            return True
+        if isinstance(value, int):
+            return False
+        if isinstance(value, float):
+            return not value.is_integer()
+        if isinstance(value, str):
+            try:
+                int(value)
+                return False
+            except ValueError:
+                return True
+        return True
+    return False
+
+
 def _check_args(name: str, args: dict):
     """Clear error for wrong or missing arguments (models, small ones especially, invent them)."""
     params = _SPEC_BY_NAME[name]["parameters"]
@@ -352,6 +380,13 @@ def _check_args(name: str, args: dict):
     unknown = sorted(set(args) - set(valid))
     missing = [r for r in required if r not in args]
     if not unknown and not missing:
+        for key, value in args.items():
+            expected = params["properties"][key].get("type")
+            if _wrong_type(value, expected):
+                hint = (" Pass each argument directly, not nested inside another object."
+                        if isinstance(value, dict) else "")
+                return (f"error: {name}: argument '{key}' must be of type {expected} "
+                        f"but got {type(value).__name__}.{hint}")
         return None
     problems = []
     if unknown:

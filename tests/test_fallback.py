@@ -196,6 +196,17 @@ def test_openai_compat_roundtrip():
     assert reply.provider == "groq"
 
 
+def test_provider_error_text_cannot_inject_terminal_codes():
+    class Evil(Exception):
+        code = 503
+
+    a, b = Fake("a", [Evil("overloaded\x1b[2J\x1b]0;pwned\x07")]), Fake("b")
+    fb, log, *_ = make([a, b])
+    fb.generate("s", [], [])
+    shown = "\n".join(log)
+    assert "overloaded" in shown and "\x1b" not in shown and "\x07" not in shown
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

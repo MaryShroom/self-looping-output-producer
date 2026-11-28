@@ -20,7 +20,8 @@ def _short(exc: Exception) -> str:
     lines = str(exc).splitlines() or [""]
     code = _status(exc)
     head = f"{type(exc).__name__}" + (f" {code}" if code else "")
-    return f"{head}: {lines[0][:160]}"
+    first = "".join(c if c.isprintable() else "?" for c in lines[0][:160])  # no terminal codes
+    return f"{head}: {first}"
 
 
 class FallbackProvider:

@@ -6,7 +6,7 @@ bubblewrap (bwrap) sandbox:
   - the system folders (/usr, ...) are visible read-only
   - the project folder is the only place a command can write
   - your home folder is NOT visible (no ~/.ssh, no other projects)
-  - .env files in the project are replaced by empty files
+  - .env files in the project are unreadable (reads fail with "Permission denied")
   - .git/hooks and .git/config are read-only
   - no network, unless you allow it
   - the command and everything it started die with it (timeout, Ctrl-C)
@@ -360,6 +360,8 @@ def _collect(proc: subprocess.Popen) -> str:
 
 
 def run_command(command: str, timeout=DEFAULT_TIMEOUT, cwd=None) -> str:
+    if command is not None and not isinstance(command, str):
+        raise ValueError("command must be a string")
     command = (command or "").strip()
     if not command:
         raise ValueError("command must not be empty")

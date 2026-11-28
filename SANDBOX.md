@@ -12,7 +12,7 @@ command can do.
 | System folders (`/usr`, ...) | visible, read-only |
 | The project folder | the only writable place |
 | Your home folder (`~/.ssh`, other projects, ...) | **not visible** |
-| `.env` files in the project | visible only as **empty files** |
+| `.env` files in the project | **unreadable**: they are listed, but reading one fails with "Permission denied" |
 | `.git/hooks`, `.git/config` | read-only |
 | Network | **off** (unless you turn it on) |
 | Timeout / Ctrl-C | kills the command and everything it started |

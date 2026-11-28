@@ -1,7 +1,7 @@
 """The agent loop: model -> tools -> model ... until the model answers without a tool call."""
 import time
 
-from tools import TOOL_SPECS, FailureStreak, format_preview, run_tool
+from tools import TOOL_SPECS, FailureStreak, format_preview, run_tool, visible_text
 
 MAX_STEPS = 15      # safety cap on tool round-trips per user message
 MAX_ARG_CHARS = 60  # long argument values (file contents) are shortened when printed
@@ -35,7 +35,9 @@ def run_turn(provider, history: list[dict], system: str,
         say(f"  ({reply.provider}, {time.monotonic() - started:.1f}s)")
         history.append(reply.to_message())
         if reply.text:
-            say(f"\n{reply.text}\n")
+            # The model can repeat file contents, including terminal escape codes: show them
+            # as text instead of letting them clear or redraw your screen.
+            say(f"\n{visible_text(reply.text)}\n")
         if not reply.tool_calls:
             return
         too_many_errors = False

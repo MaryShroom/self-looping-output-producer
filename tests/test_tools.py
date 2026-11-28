@@ -270,6 +270,30 @@ def test_approval_previews_escape_control_characters():
     assert "\\x1b" in summary
 
 
+def test_visible_text_keeps_layout_but_escapes_control_characters():
+    assert tools.visible_text("a\nb\tc") == "a\nb\tc"
+    out = tools.visible_text("x\x1b[2Jy\rz\x07\n‮!")
+    assert out == "x\\x1b[2Jy\\x0dz\\x07\n\\u202e!"
+    assert tools.visible_text("héllo 你好 🙂") == "héllo 你好 🙂"      # normal text untouched
+
+
+def test_wrong_argument_types_get_a_clear_error():
+    # what qwen2.5:0.5b actually sent: the whole argument object nested inside `command`
+    out = tools.run_tool("bash", {"command": {"command": "cat evil.txt", "timeout": 30}})
+    assert out.startswith("error: bash: argument 'command' must be of type string but got dict.")
+    assert "not nested inside another object" in out
+    assert "must be of type string but got list" in tools.run_tool("read_file", {"path": ["a", "b"]})
+    assert "must be of type string but got int" in tools.run_tool("read_file", {"path": 5})
+    assert "must be of type integer but got str" in tools.run_tool("bash", {"command": "x", "timeout": "abc"})
+    assert "must be of type integer but got bool" in tools.run_tool("bash", {"command": "x", "timeout": True})
+    assert "must be of type integer but got float" in tools.run_tool("bash", {"command": "x", "timeout": 2.5})
+
+
+def test_numbers_are_accepted_the_way_each_provider_sends_them():
+    for timeout in (30, 30.0, "30"):       # int, Gemini's float, a model's string
+        assert tools._check_args("bash", {"command": "ls", "timeout": timeout}) is None, timeout
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
