@@ -13,12 +13,11 @@
 - [x] bubblewrap sandbox, switchable at runtime (`/sandbox`), `.env` hidden, network off by default
 - [x] Hardening: path confinement, `.env` and `.git` protection, argument type checks,
       terminal escape sanitising, bounded `read_file` (offset/limit)
+- [x] `/auto files|shell on|off` switch (shell auto-approve only for sandboxed, safe-looking commands)
 - [x] `grep` and `glob` (pure Python, capped, skips noise folders)
 - [x] Offline test suite (fake providers, fake bwrap, real-bwrap tests that skip when unavailable)
 
 ## Next
-- [ ] Auto-approve switch (file changes and, separately, shell commands), e.g. `/auto on|off`
-      and a startup option; shell commands should stay opt-in
 - [ ] Context management: trim or summarise old tool output so long sessions do not overflow
       small context windows (matters most on fallback providers and Ollama)
 - [ ] Handle smaller context windows when failing over to another provider

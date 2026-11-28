@@ -184,14 +184,27 @@ def test_warnings_are_passed_to_the_approval_prompt():
     assert any("deletes" in w for w in e.asked[0][2])
 
 
-def test_auto_approve_flag_skips_prompt_but_runs():
+def test_auto_approve_flag_skips_prompt_when_sandboxed_and_safe():
     e = Env(approve=False)          # would decline if it were asked
+    shell.auto_approve = True
+    original = shell._plan
+    shell._plan = lambda: (False, "sandbox: bwrap, network off", None)   # pretend it is sandboxed
+    try:
+        out = quiet(run, "echo auto")
+    finally:
+        shell._plan = original
+        shell.auto_approve = False
+    assert "auto" in out and e.asked == []
+
+
+def test_auto_approve_still_asks_when_the_sandbox_is_off():
+    e = Env(approve=False)          # sandbox off: the command would run unsandboxed
     shell.auto_approve = True
     try:
         out = quiet(run, "echo auto")
     finally:
         shell.auto_approve = False
-    assert "auto" in out and e.asked == []
+    assert out == shell.DECLINED and len(e.asked) == 1
 
 
 def test_empty_command_is_an_error():

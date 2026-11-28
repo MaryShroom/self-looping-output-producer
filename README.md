@@ -56,7 +56,23 @@ with a bad key or unknown model is skipped for the rest of the session.
 | `bash`       | Runs a shell command (in a sandbox when available)                    | yes (y/N)   |
 
 Answering `a` at a file-change prompt approves the rest of the session's file changes. Shell
-commands are always asked about.
+commands are always asked about, unless you turn on auto-approve (below).
+
+### Auto-approve
+
+Off by default, and only switchable while SLOP is running (not from `.env`, so a project you
+just cloned cannot turn your prompts off). Only you can type these; the model cannot.
+
+```
+/auto                 show the settings
+/auto files on|off    apply write_file/edit_file changes without asking (the diff is still printed)
+/auto shell on|off    run commands without asking (asks you to type "yes" first)
+/auto off             turn both off
+```
+
+With `/auto shell on`, only commands that run **inside the sandbox** and do **not** look risky
+skip the prompt. Anything that would run unsandboxed, or that triggers a warning (deleting files,
+touching secrets, piping to a shell, ...), still asks.
 
 ### Guard rails
 
@@ -85,12 +101,15 @@ and there is no network by default. Switch it while running:
 /sandbox net on|off
 ```
 
+`/help` lists every command.
+
 It is a strong barrier, not a virtual machine. Setup (including the Ubuntu 24.04 AppArmor
 note) and its limits are in [SANDBOX.md](SANDBOX.md).
 
 ## Layout
 
-- `main.py` — startup, `.env` loading, the input loop and slash commands
+- `main.py` — startup, `.env` loading and the input loop
+- `commands.py` — slash commands you type (`/auto`, `/sandbox`, `/help`)
 - `agent.py` — the agent loop (model -> tools -> model ...)
 - `tools.py` — tool implementations, schemas, argument checking, approval prompts
 - `search.py` — `grep` and `glob`

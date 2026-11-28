@@ -1,7 +1,7 @@
 """Minimal coding assistant: terminal chat + tool loop, with provider failover."""
 import os
 import time
-import shell
+import commands
 from pathlib import Path
 
 from providers import build_provider
@@ -48,7 +48,7 @@ def main() -> None:
         if not user:
             continue
         if user.startswith("/"):
-            print(shell.handle_slash(user) or "unknown command. Try /sandbox")
+            print(commands.handle_slash(user) or "unknown command. Try /help")
             continue
         history.append({"role": "user", "text": user})
         try:

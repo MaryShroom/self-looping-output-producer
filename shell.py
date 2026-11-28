@@ -335,10 +335,23 @@ def _prompt_user(command: str, timeout: int, cwd, warnings: list[str], label: st
 confirm_fn = _prompt_user  # replaceable (tests, or a different UI later)
 
 
+def why_ask_anyway(warnings: list[str], label: str):
+    """With auto-approve on, a command still needs a yes when it is not clearly safe to skip:
+    it would run outside the sandbox, or it looks risky. Returns the reason, or None."""
+    if label.startswith("UNSANDBOXED"):
+        return "it would run outside the sandbox"
+    if warnings:
+        return "it looks risky"
+    return None
+
+
 def _approve(command: str, timeout: int, cwd, warnings: list[str], label: str = "") -> bool:
     if auto_approve:
-        print(_describe(command, timeout, cwd, warnings, label))
-        return True
+        reason = why_ask_anyway(warnings, label)
+        if reason is None:
+            print(_describe(command, timeout, cwd, warnings, label))
+            return True
+        print(f"(auto-approve is on, but you are asked because {reason})")
     return confirm_fn(command, timeout, cwd, warnings, label)
 
 
