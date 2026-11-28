@@ -185,7 +185,12 @@ def find_files(root: Path, base: Path, pattern: str, max_results=DEFAULT_GLOB_RE
     more = f"{len(found) - limit} more not shown, narrow the pattern or path" if len(found) > limit else ""
     stopped = f"search stopped after {TIME_BUDGET:g}s, results may be incomplete" if timed_out else ""
     if not shown:
-        return "\n".join(["no files match", _notes(stopped)]).strip()
+        hint = ""
+        if "/" in pattern:
+            hint = ("Patterns with '/' match the path from the search folder; a pattern without '/' "
+                    "(like '*.py') matches file names at any depth.")
+        return "\n".join(
+            [f"no files match (checked {_count(visited, 'file')})", _notes(stopped), hint]).strip()
     return "\n".join(shown + [n for n in (_notes(more, stopped),) if n])
 
 
@@ -209,6 +214,7 @@ def grep_files(root: Path, base: Path, pattern: str, include=None, ignore_case=F
         files, single = iter_files(base), False
     deadline = time.monotonic() + TIME_BUDGET
     results, matched_files, too_big, timed_out, truncated, visited = [], set(), 0, False, False, 0
+    searched = 0                                 # files whose text was actually looked at
 
     for p in files:
         visited += 1
@@ -231,6 +237,7 @@ def grep_files(root: Path, base: Path, pattern: str, include=None, ignore_case=F
             continue
         if b"\0" in data[:8192]:                 # binary file
             continue
+        searched += 1
         rel = p.relative_to(root).as_posix()
         for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
             if rx.search(line[:MAX_LINE_SCAN]):
@@ -255,5 +262,11 @@ def grep_files(root: Path, base: Path, pattern: str, include=None, ignore_case=F
         summary = _notes(
             f"{_count(len(results), 'match')} in {_count(len(matched_files), 'file')}", big, stopped)
     else:
-        return "\n".join(["no matches", _notes(big, stopped)]).strip()
+        hint = ""
+        if searched == 0 and include:
+            hint = (f"no file matched include='{include}'. Patterns without '/' match file names at any "
+                    "depth, patterns with '/' match the path from the search folder. "
+                    "Try again without `include`.")
+        return "\n".join(
+            [f"no matches (searched {_count(searched, 'file')})", _notes(big, stopped), hint]).strip()
     return "\n".join(results + [summary])

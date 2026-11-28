@@ -213,7 +213,7 @@ def test_unknown_argument_error_lists_valid_ones():
     Env()
     out = tools.run_tool("read_file", {"path": "a.txt", "toolbench_rust_version": "1.04.0"})
     assert out.startswith("error: read_file:") and "unknown argument(s) ['toolbench_rust_version']" in out
-    assert "Valid arguments: ['path']" in out
+    assert "Valid arguments: ['limit', 'offset', 'path']" in out
 
 
 def test_missing_required_argument_error():
@@ -292,6 +292,81 @@ def test_wrong_argument_types_get_a_clear_error():
 def test_numbers_are_accepted_the_way_each_provider_sends_them():
     for timeout in (30, 30.0, "30"):       # int, Gemini's float, a model's string
         assert tools._check_args("bash", {"command": "ls", "timeout": timeout}) is None, timeout
+
+
+def numbered(n):
+    return "".join(f"line {i}\n" for i in range(1, n + 1))
+
+
+def test_read_file_returns_small_files_unchanged():
+    e = Env()
+    e.write("s.txt", "a\nb")
+    assert tools.run_tool("read_file", {"path": "s.txt"}) == "a\nb"        # no footer, no changes
+    e.write("crlf.txt", "a\r\nb\r\n", newline="")
+    assert tools.run_tool("read_file", {"path": "crlf.txt"}) == "a\r\nb\r\n"
+    e.write("empty.txt", "")
+    assert tools.run_tool("read_file", {"path": "empty.txt"}) == "(empty file)"
+
+
+def test_read_file_pages_through_a_long_file():
+    e = Env()
+    e.write("long.txt", numbered(1200))
+    first = tools.run_tool("read_file", {"path": "long.txt"})
+    assert first.startswith("line 1\n") and "line 500\n" in first and "line 501" not in first
+    assert first.endswith("[lines 1-500 shown, more follow: call read_file again with offset=501]")
+    second = tools.run_tool("read_file", {"path": "long.txt", "offset": 501})
+    assert second.startswith("line 501\n") and "offset=1001" in second
+    last = tools.run_tool("read_file", {"path": "long.txt", "offset": 1001})
+    assert last.startswith("line 1001\n") and last.endswith("[lines 1001-1200, end of file]")
+
+
+def test_read_file_limit_and_clamping():
+    e = Env()
+    e.write("t.txt", numbered(50))
+    out = tools.run_tool("read_file", {"path": "t.txt", "offset": 10, "limit": 3})
+    assert out == "line 10\nline 11\nline 12\n[lines 10-12 shown, more follow: call read_file again with offset=13]"
+    assert tools.run_tool("read_file", {"path": "t.txt", "limit": "2"}).count("\nline") == 1   # "2" as a string
+    e.write("big.txt", numbered(5000))
+    assert "lines 1-2000 shown" in tools.run_tool("read_file", {"path": "big.txt", "limit": 99999})
+    assert "offset must be 1 or more" in tools.run_tool("read_file", {"path": "t.txt", "offset": 0})
+    assert "past the end of the file (50 lines)" in tools.run_tool("read_file", {"path": "t.txt", "offset": 51})
+    assert "must be of type integer" in tools.run_tool("read_file", {"path": "t.txt", "limit": "lots"})
+
+
+def test_read_file_output_is_capped_in_characters():
+    e = Env()
+    e.write("wide.txt", ("x" * 1500 + "\n") * 100)           # 150 KB in 100 lines
+    out = tools.run_tool("read_file", {"path": "wide.txt", "limit": 2000})
+    assert len(out) <= tools.MAX_CHARS + 200
+    assert "more follow: call read_file again with offset=" in out
+
+
+def test_read_file_clips_one_enormous_line_without_loading_it():
+    e = Env()
+    e.write("min.js", "start\n" + "y" * 5_000_000 + "\nend\n")  # a 5 MB line
+    out = tools.run_tool("read_file", {"path": "min.js"})
+    assert out.startswith("start\n") and "…[line clipped]" in out and out.rstrip().endswith("end")
+    assert len(out) < 5000
+
+
+def test_read_file_refuses_binary_folders_pipes_and_secrets():
+    import os
+    e = Env()
+    (e.root / "b.bin").write_bytes(b"abc\0def")
+    assert "binary file" in tools.run_tool("read_file", {"path": "b.bin"})
+    (e.root / "d").mkdir()
+    assert "use list_files" in tools.run_tool("read_file", {"path": "d"})
+    assert "file not found" in tools.run_tool("read_file", {"path": "nope.txt"})
+    os.mkfifo(e.root / "pipe")                                  # would block forever if opened for reading
+    assert "not a regular file" in tools.run_tool("read_file", {"path": "pipe"})
+    e.write(".env", "KEY=1\n")
+    assert "refusing to read" in tools.run_tool("read_file", {"path": ".env", "offset": 1})
+
+
+def test_read_file_tolerates_bad_utf8():
+    e = Env()
+    (e.root / "latin.txt").write_bytes(b"caf\xe9\n")
+    assert tools.run_tool("read_file", {"path": "latin.txt"}) == "caf�\n"
 
 
 if __name__ == "__main__":

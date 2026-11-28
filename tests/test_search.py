@@ -146,6 +146,24 @@ def test_grep_no_matches_and_bad_input():
     assert p.grep("x", ignore_case="maybe").startswith("error: grep: argument 'ignore_case'")
 
 
+def test_grep_no_match_says_how_many_files_were_searched_and_hints_about_include():
+    p = Project()
+    out = p.grep("zzz_not_here", include="*.py")
+    assert out.startswith("no matches (searched 3 files)"), out         # a.py, sub/b.py, sub/deep/c.py
+    assert "no file matched" not in out
+    out = p.grep("run_turn", include="src/**/*.ts")                    # what the 0.5B model tried
+    assert out.startswith("no matches (searched 0 files)")
+    assert "no file matched include='src/**/*.ts'" in out and "without `include`" in out
+    assert p.grep("zzz", path="a.py").startswith("no matches (searched 1 file)")
+
+
+def test_glob_no_match_says_how_many_files_were_checked():
+    p = Project()
+    out = p.glob("*.nothing")
+    assert out.startswith("no files match (checked ") and "Patterns with '/'" not in out
+    assert "Patterns with '/' match the path" in p.glob("src/**/*.ts")
+
+
 def test_grep_time_budget_stops_and_says_so():
     p = Project()
     search.TIME_BUDGET = -1        # already expired

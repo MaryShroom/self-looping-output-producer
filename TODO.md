@@ -1,18 +1,40 @@
 # TODO
 
-## Multi-provider failover (branch: failover)
-- [x] Retry with exponential backoff on transient errors (503, 429, timeouts)
-- [x] `OpenAICompatProvider` for Groq, Cerebras, OpenRouter, Ollama (base URL, key, model via env vars)
-- [x] Neutral history format (text + tool calls), with optional provider-specific `raw` kept for Gemini
-- [x] `FallbackProvider` wrapper: ordered provider list (env var), fail over on transient errors only
-- [x] Print a notice when switching providers (e.g. `[switched to groq]`)
-- [x] Only list models with reliable tool calling in the fallback chain (verify per model)
-- [x] Handle smaller context windows on fallback providers
-- [x] Test against the real APIs (only fake-provider tests so far)
-- [ ] If switching back to Gemini fails on thought signatures, stay on the fallback for the rest of the task
+## Done
+- [x] Chat loop with tool calls (`agent.py`), 15-step cap, stops after repeated tool failures
+- [x] Multi-provider failover: Gemini, Groq, Cerebras, OpenRouter, Ollama
+  - [x] Retry and backoff on transient errors (503, 429, timeouts), request timeouts
+  - [x] Fast failover when another provider exists; escalating cooldown for flaky ones
+  - [x] Skip a provider for the session on bad key / unknown model (401, 403, 404)
+  - [x] Neutral history format, provider-specific `raw` kept for Gemini
+  - [x] Notice when switching providers, with timing
+- [x] `write_file` / `edit_file` with diff preview and approval (y/N/a)
+- [x] `bash` tool with approval, timeout, secret-stripped environment, risky-command warnings
+- [x] bubblewrap sandbox, switchable at runtime (`/sandbox`), `.env` hidden, network off by default
+- [x] Hardening: path confinement, `.env` and `.git` protection, argument type checks,
+      terminal escape sanitising, bounded `read_file` (offset/limit)
+- [x] `grep` and `glob` (pure Python, capped, skips noise folders)
+- [x] Offline test suite (fake providers, fake bwrap, real-bwrap tests that skip when unavailable)
 
 ## Next
-- [x] `write_file` / `edit_file` with confirmation prompt
-- [x] `bash` tool with confirmation
-- [ ] Search tools (grep, glob)
-- [ ] Context management
+- [ ] Auto-approve switch (file changes and, separately, shell commands), e.g. `/auto on|off`
+      and a startup option; shell commands should stay opt-in
+- [ ] Context management: trim or summarise old tool output so long sessions do not overflow
+      small context windows (matters most on fallback providers and Ollama)
+- [ ] Handle smaller context windows when failing over to another provider
+- [ ] If switching back to Gemini fails on thought signatures, stay on the fallback for the
+      rest of the task
+- [ ] Only list models with reliable tool calling in the fallback chain (document which ones)
+
+## Later
+- [ ] TUI / GUI (long commands and diffs do not fit a small terminal window)
+- [ ] Image support: a `view_image` tool for models with vision, and a clear message otherwise
+- [ ] `.gitignore`-aware search, and optional ripgrep acceleration when `rg` is installed
+- [ ] Per-project config file (allowed commands, default sandbox mode, extra read-only paths)
+- [ ] Persistent session history / resume
+
+## Known limits
+- bubblewrap is not a virtual machine; a kernel bug could still escape it (see SANDBOX.md)
+- Regex search runs inside SLOP, so a pathological pattern can be slow
+- Very small models (e.g. qwen2.5:0.5b) call tools wrongly and summarise unreliably; the guard
+  rails keep that harmless, but use a larger model for real work

@@ -12,7 +12,11 @@ import search
 import shell
 
 ROOT = Path.cwd().resolve()  # the agent only touches files under where you launch it
-MAX_CHARS = 20_000
+MAX_CHARS = 20_000          # most text a single read_file call returns
+DEFAULT_READ_LINES = 500    # lines per read_file call unless `limit` says otherwise
+MAX_READ_LINES = 2000
+MAX_LINE_CHARS = 2000       # longer lines are clipped (minified files, data blobs)
+MAX_READ_SCAN = 50_000_000  # characters read past when skipping ahead to `offset`
 MAX_PREVIEW_LINES = 60
 
 # When True, changes are still printed but applied without asking. Answering "a"
@@ -184,14 +188,64 @@ def _approve(summary: str) -> bool:
 
 # --- tools -----------------------------------------------------------------
 
-def read_file(path: str) -> str:
+def read_file(path: str, offset=1, limit=DEFAULT_READ_LINES) -> str:
+    """Read part of a text file, never more than MAX_CHARS, without loading all of it."""
     target = _safe(path)
     if _is_secret(target):
         raise ValueError("refusing to read a secrets file")
-    text = target.read_text(errors="replace")
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS] + "\n...[truncated]"
-    return text
+    if not target.exists():
+        raise ValueError(f"file not found: {path}")
+    if target.is_dir():
+        raise ValueError("path is a folder; use list_files")
+    if not target.is_file():
+        raise ValueError("not a regular file")       # pipes and devices could block forever
+    offset, limit = int(offset), int(limit)
+    if offset < 1:
+        raise ValueError("offset must be 1 or more (line numbers start at 1)")
+    limit = max(1, min(limit, MAX_READ_LINES))
+
+    with target.open("rb") as raw:
+        if b"\0" in raw.read(8192):
+            raise ValueError("binary file, not text")
+
+    out, chars, scanned, line_no, next_line = [], 0, 0, 0, None
+    with target.open(encoding="utf-8", errors="replace", newline="") as f:
+        while True:
+            chunk = f.readline(MAX_LINE_CHARS + 1)       # a huge single line cannot blow up memory
+            if not chunk:
+                break
+            line_no += 1
+            scanned += len(chunk)
+            clipped = len(chunk) > MAX_LINE_CHARS and not chunk.endswith(("\n", "\r"))
+            while clipped:                                # throw away the rest of that line
+                rest = f.readline(65536)
+                scanned += len(rest)
+                if not rest or rest.endswith(("\n", "\r")) or scanned > MAX_READ_SCAN:
+                    break
+            if scanned > MAX_READ_SCAN:
+                raise ValueError("file is too large to jump to a line number; use grep to find it")
+            if line_no < offset:
+                continue
+            text = chunk[:MAX_LINE_CHARS] + "…[line clipped]\n" if clipped else chunk
+            if len(out) >= limit or (out and chars + len(text) > MAX_CHARS):
+                next_line = line_no
+                break
+            out.append(text)
+            chars += len(text)
+
+    if not out:
+        if line_no == 0:
+            return "(empty file)"
+        raise ValueError(f"offset {offset} is past the end of the file ({line_no} lines)")
+    body = "".join(out)
+    if body[-1] not in "\r\n" and (next_line or offset > 1):
+        body += "\n"
+    last = offset + len(out) - 1
+    if next_line:
+        body += f"[lines {offset}-{last} shown, more follow: call read_file again with offset={next_line}]"
+    elif offset > 1:
+        body += f"[lines {offset}-{last}, end of file]"
+    return body
 
 
 def list_files(path: str = ".") -> str:
@@ -281,11 +335,16 @@ _IMPLS = {
 TOOL_SPECS = [
     {
         "name": "read_file",
-        "description": "Read a text file and return its contents.",
+        "description": (
+            "Read a text file. Returns up to 500 lines per call (at most 20000 characters); "
+            "when more follow, the result ends with the offset to use next."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path relative to the project root."}
+                "path": {"type": "string", "description": "File path relative to the project root."},
+                "offset": {"type": "integer", "description": "Line number to start at (first line is 1). Default 1."},
+                "limit": {"type": "integer", "description": "Maximum number of lines to return (default 500, max 2000)."},
             },
             "required": ["path"],
         },
